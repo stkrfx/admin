@@ -9,21 +9,22 @@ import { authOptions } from "@/lib/auth";
 import crypto from 'crypto';
 import { limitKey } from "@/lib/rateLimiter";
 
-// 0. Get User Data (Safe Serialization)
+// 0. Get User Data (Safe Serialization Fix)
 export async function getSetupUser() {
   try {
     const session = await getServerSession(authOptions);
     if (!session) return null;
 
     await connectMongo();
-    // Use .lean() and explicit selection to avoid large objects
+    
+    // Use lean() to get a plain JS object, select only needed fields
     const user = await User.findById(session.user.id)
       .select('name username email photo')
       .lean();
     
     if (!user) return null;
 
-    // Return simple object (force serialization)
+    // Manually construct response to ensure strict serialization
     return {
       name: user.name || '',
       username: user.username || '',
@@ -32,7 +33,8 @@ export async function getSetupUser() {
     };
   } catch (error) {
     console.error("Get Setup User Error:", error);
-    return null; // Return null safely instead of throwing
+    // Return null instead of throwing to prevent client crash
+    return null;
   }
 }
 
@@ -90,7 +92,9 @@ export async function verifyAndSetPassword({ otp, password }) {
   user.isVerified = true;
   user.verificationOTP = undefined;
   user.verificationOTPExpiry = undefined;
-  user.forcePasswordChange = false; // Unlock account immediately
+  
+  // Unlock account immediately so step 3 is optional
+  user.forcePasswordChange = false; 
   
   await user.save();
   return { success: true };
