@@ -43,31 +43,28 @@ export default function SetupAccountPage() {
   const { data: session, update } = useSession();
   const router = useRouter();
   
-  // State
   const [step, setStep] = useState(1); 
   const [loading, setLoading] = useState(false);
   const [resendTimer, setResendTimer] = useState(0);
   const [photoUrl, setPhotoUrl] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   
-  // Hidden input ref for image upload
   const fileInputRef = useRef(null);
 
-  // Forms
   const passwordForm = useForm({ resolver: zodResolver(step2Schema) });
   const profileForm = useForm({ 
     resolver: zodResolver(step3Schema),
     defaultValues: { name: '', username: '' } 
   });
 
-  // Hydrate User Data for Step 3
+  // Fetch Existing Data for Step 3
   useEffect(() => {
     if (step === 3) {
       getSetupUser().then((user) => {
         if (user) {
           profileForm.reset({
-            name: user.name || '',
-            username: user.username || ''
+            name: user.name,
+            username: user.username
           });
           if (user.photo) setPhotoUrl(user.photo);
         }
@@ -82,34 +79,26 @@ export default function SetupAccountPage() {
       setIsUploading(false);
       toast.success("Photo Updated");
     },
-    onUploadError: () => {
+    onUploadError: (e) => {
       setIsUploading(false);
-      toast.error("Upload Failed");
+      toast.error("Upload Failed", { description: e.message });
     },
   });
 
-  // Handle File Selection
   const handleImageChange = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    // 1. Show immediate preview
     const previewUrl = URL.createObjectURL(file);
     setPhotoUrl(previewUrl);
     setIsUploading(true);
-
-    // 2. Start Upload
     await startUpload([file]);
   };
 
-  // Timer Effect
   useEffect(() => {
     let interval;
     if (resendTimer > 0) interval = setInterval(() => setResendTimer((t) => t - 1), 1000);
     return () => clearInterval(interval);
   }, [resendTimer]);
-
-  // --- HANDLERS ---
 
   const handleSendOTP = async () => {
     setLoading(true);
@@ -119,10 +108,8 @@ export default function SetupAccountPage() {
       if (res.success) {
         setStep(2);
         setResendTimer(60);
-        toast.success("Code sent to email");
-      } else {
-        toast.error(res.error);
-      }
+        toast.success("Code sent");
+      } else toast.error(res.error);
     } catch { toast.error("System Error"); }
     finally { setLoading(false); }
   };
@@ -135,10 +122,8 @@ export default function SetupAccountPage() {
       if (res.success) {
         await update({ forcePasswordChange: false });
         setStep(3); 
-        toast.success("Account Secured");
-      } else {
-        toast.error(res.error);
-      }
+        toast.success("Verified!");
+      } else toast.error(res.error);
     } catch { toast.error("Verification Error"); }
     finally { setLoading(false); }
   };
@@ -155,9 +140,7 @@ export default function SetupAccountPage() {
         toast.success("Setup Complete!");
         router.push('/dashboard');
         router.refresh();
-      } else {
-        toast.error(res.error);
-      }
+      } else toast.error(res.error);
     } catch { toast.error("Update Failed"); }
     finally { setLoading(false); }
   };
@@ -171,7 +154,7 @@ export default function SetupAccountPage() {
     <div className="w-full min-h-[100dvh] flex bg-white">
       <Toaster position="bottom-right" richColors closeButton />
 
-      {/* --- LEFT SIDE: FORM --- */}
+      {/* --- LEFT SIDE --- */}
       <div className="w-full lg:w-1/2 flex flex-col justify-center items-center p-8 sm:p-12 lg:p-24 relative z-10">
         
         {/* Progress Bar */}
@@ -182,20 +165,18 @@ export default function SetupAccountPage() {
         <div className="w-full max-w-md space-y-8">
           
           <div className="text-center lg:text-left">
-            <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-slate-900 text-white font-bold text-2xl mb-6 shadow-xl shadow-slate-900/20">
-              M
-            </div>
+            <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-slate-900 text-white font-bold text-2xl mb-6 shadow-xl shadow-slate-900/20">M</div>
             <h1 className="text-3xl font-bold tracking-tight text-slate-900">
-              {step === 1 ? "Check your Inbox" : step === 2 ? "Secure Access" : "One Last Thing"}
+              {step === 1 ? "Identity Verification" : step === 2 ? "Secure Access" : "Personalize"}
             </h1>
             <p className="mt-2 text-slate-500">
-              {step === 1 && `We've sent a code to ${session?.user?.email}`}
-              {step === 2 && "Enter the code and set a new password."}
-              {step === 3 && "Review your profile details. You can change this anytime."}
+              {step === 1 && "Security Check. Verifying your identity."}
+              {step === 2 && "Set a secure password for your admin account."}
+              {step === 3 && "Review your profile details. (Optional)"}
             </p>
           </div>
 
-          {/* STEP 1: SEND OTP */}
+          {/* STEP 1 */}
           {step === 1 && (
             <div className="space-y-6 animate-in fade-in slide-in-from-right-8 duration-500">
               <div className="p-8 bg-slate-50 border border-slate-100 rounded-2xl flex flex-col items-center gap-4 text-center">
@@ -203,27 +184,22 @@ export default function SetupAccountPage() {
                   <Mail size={32} />
                 </div>
                 <div>
-                  <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Verify Email</div>
+                  <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Email</div>
                   <div className="font-medium text-slate-900 text-lg">{session?.user?.email}</div>
                 </div>
               </div>
-
-              <Button onClick={handleSendOTP} disabled={loading} className="w-full h-12 text-base font-semibold shadow-lg shadow-slate-900/10">
-                {loading ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <>Send Verification Code <ArrowRight className="ml-2 h-5 w-5" /></>}
+              <Button onClick={handleSendOTP} disabled={loading} className="w-full h-12 text-base font-semibold shadow-lg shadow-slate-900/10 bg-slate-900 hover:bg-slate-800">
+                {loading ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <>Send Code <ArrowRight className="ml-2 h-5 w-5" /></>}
               </Button>
-
-              <div className="text-center">
-                <button onClick={() => signOut()} className="text-sm text-slate-400 hover:text-slate-600 font-medium flex items-center justify-center gap-2 mx-auto transition-colors">
-                  <LogOut size={14} /> Sign out
-                </button>
-              </div>
+              <button onClick={() => signOut()} className="w-full text-sm text-slate-400 hover:text-slate-600 font-medium flex items-center justify-center gap-2 transition-colors">
+                <LogOut size={14} /> Sign out
+              </button>
             </div>
           )}
 
-          {/* STEP 2: VERIFY */}
+          {/* STEP 2 */}
           {step === 2 && (
             <form onSubmit={passwordForm.handleSubmit(handleVerify)} className="space-y-8 animate-in fade-in slide-in-from-right-8 duration-500">
-              
               <div className="space-y-4">
                 <div className="flex justify-between items-center">
                   <label className="text-sm font-semibold text-slate-700">Verification Code</label>
@@ -232,21 +208,22 @@ export default function SetupAccountPage() {
                   </button>
                 </div>
                 
-                {/* IMPROVED OTP INPUT: Full width & Spaced */}
+                {/* Full Width OTP */}
                 <div className="w-full">
                   <Controller
                     control={passwordForm.control}
                     name="otp"
                     render={({ field }) => (
-                      <InputOTP maxLength={6} {...field} containerClassName="w-full justify-between gap-2">
-                        {/* We map slots individually to control spacing via the container gap */}
-                        {[0, 1, 2, 3, 4, 5].map((index) => (
-                          <InputOTPSlot 
-                            key={index} 
-                            index={index} 
-                            className="flex-1 h-14 text-lg border-2 border-slate-200 shadow-sm rounded-xl focus:border-slate-900 transition-all bg-white" 
-                          />
-                        ))}
+                      <InputOTP maxLength={6} {...field}>
+                        <div className="flex w-full gap-2 justify-between">
+                          {[0, 1, 2, 3, 4, 5].map((index) => (
+                            <InputOTPSlot 
+                              key={index} 
+                              index={index} 
+                              className="flex-1 h-14 text-xl border-slate-200 shadow-sm rounded-xl focus:border-slate-900 focus:ring-slate-900/20 bg-white transition-all" 
+                            />
+                          ))}
+                        </div>
                       </InputOTP>
                     )}
                   />
@@ -266,57 +243,36 @@ export default function SetupAccountPage() {
                 </div>
               </div>
 
-              <Button type="submit" disabled={loading} className="w-full h-12 text-base font-semibold shadow-lg shadow-slate-900/10">
+              <Button type="submit" disabled={loading} className="w-full h-12 text-base font-semibold shadow-lg shadow-slate-900/10 bg-slate-900 hover:bg-slate-800">
                 {loading ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <>Verify & Secure <ShieldCheck className="ml-2 h-5 w-5" /></>}
               </Button>
             </form>
           )}
 
-          {/* STEP 3: PROFILE */}
+          {/* STEP 3 */}
           {step === 3 && (
             <div className="animate-in fade-in slide-in-from-right-8 duration-500">
-              <div className="mb-8 p-4 bg-emerald-50 border border-emerald-100 rounded-xl flex items-center gap-3">
-                <div className="bg-emerald-100 p-1.5 rounded-full"><CheckCircle2 className="text-emerald-600 h-5 w-5" /></div>
-                <p className="text-sm text-emerald-800 font-medium">Password secured. Set up your profile below.</p>
+              <div className="mb-8 p-4 bg-emerald-50 border border-emerald-100 rounded-xl flex items-center gap-3 text-emerald-800">
+                <CheckCircle2 className="h-5 w-5" />
+                <p className="text-sm font-medium">Account verified successfully.</p>
               </div>
 
               <form onSubmit={profileForm.handleSubmit(handleProfileUpdate)} className="space-y-8">
-                
-                {/* Clickable Photo Upload */}
                 <div className="flex justify-center">
-                  <div 
-                    className="relative group cursor-pointer" 
-                    onClick={() => fileInputRef.current?.click()}
-                  >
+                  <div className="relative group cursor-pointer" onClick={() => fileInputRef.current?.click()}>
                     <Avatar className="h-32 w-32 border-4 border-white shadow-xl group-hover:scale-105 transition-transform duration-300 ring-4 ring-slate-50">
                       <AvatarImage src={photoUrl || session?.user?.image} className="object-cover" />
                       <AvatarFallback className="bg-slate-900 text-slate-50 text-4xl font-bold uppercase">
                         {session?.user?.name?.[0] || 'U'}
                       </AvatarFallback>
                     </Avatar>
-                    
-                    {/* Hover Overlay */}
-                    <div className={cn(
-                      "absolute inset-0 bg-slate-900/60 rounded-full flex items-center justify-center transition-opacity duration-200 backdrop-blur-[1px]",
-                      isUploading ? "opacity-100" : "opacity-0 group-hover:opacity-100"
-                    )}>
+                    <div className={cn("absolute inset-0 bg-slate-900/60 rounded-full flex items-center justify-center transition-opacity duration-200 backdrop-blur-[1px]", isUploading ? "opacity-100" : "opacity-0 group-hover:opacity-100")}>
                       {isUploading ? <Loader2 className="text-white animate-spin" /> : <Camera className="text-white h-8 w-8" />}
                     </div>
-
-                    {/* Edit Badge */}
                     <div className="absolute bottom-0 right-0 bg-white p-2 rounded-full shadow-md border border-slate-100 text-slate-700 group-hover:bg-slate-50 transition-colors">
                       <Edit2 size={16} />
                     </div>
-                    
-                    {/* Hidden Input */}
-                    <input 
-                      ref={fileInputRef}
-                      type="file" 
-                      className="hidden" 
-                      accept="image/*"
-                      onChange={handleImageChange}
-                      disabled={isUploading}
-                    />
+                    <input ref={fileInputRef} type="file" className="hidden" accept="image/*" onChange={handleImageChange} disabled={isUploading} />
                   </div>
                 </div>
 
@@ -325,7 +281,6 @@ export default function SetupAccountPage() {
                     <label className="text-sm font-semibold text-slate-700">Display Name</label>
                     <Input {...profileForm.register('name')} placeholder="John Doe" className="h-12 bg-slate-50 focus:bg-white border-slate-200" />
                   </div>
-
                   <div className="space-y-2">
                     <label className="text-sm font-semibold text-slate-700">Username</label>
                     <div className="flex gap-2">
@@ -341,33 +296,24 @@ export default function SetupAccountPage() {
                   <Button type="submit" disabled={loading || isUploading} className="w-full h-12 text-base font-semibold shadow-lg shadow-emerald-600/10 bg-emerald-600 hover:bg-emerald-700 text-white">
                     {loading ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : "Save Profile & Finish"}
                   </Button>
-                  
-                  <Button type="button" variant="ghost" onClick={() => router.push('/dashboard')} className="w-full text-slate-400 hover:text-slate-600 font-medium">
-                    Skip for now
-                  </Button>
+                  <Button type="button" variant="ghost" onClick={() => router.push('/dashboard')} className="w-full text-slate-400 hover:text-slate-600 font-medium">Skip for now</Button>
                 </div>
               </form>
             </div>
           )}
-
         </div>
       </div>
 
-      {/* --- RIGHT SIDE: DOODLE / ILLUSTRATION --- */}
+      {/* --- RIGHT SIDE --- */}
       <div className="hidden lg:flex w-1/2 bg-slate-50 border-l border-slate-100 items-center justify-center relative overflow-hidden">
-        {/* Background Pattern */}
         <div className="absolute inset-0 opacity-[0.03]" style={{ backgroundImage: 'radial-gradient(#475569 1px, transparent 1px)', backgroundSize: '32px 32px' }}></div>
-        
         <div className="relative z-10 text-center max-w-lg p-12">
-          {/* Illustration Container */}
           <div className="w-72 h-72 bg-white rounded-3xl shadow-[0_32px_64px_-12px_rgba(0,0,0,0.08)] mx-auto mb-10 flex items-center justify-center relative border border-slate-100/50 backdrop-blur-sm">
              <div className="absolute inset-0 bg-gradient-to-tr from-slate-50/50 to-transparent rounded-3xl" />
-             
              {step === 1 && <Mail size={120} className="text-blue-500 opacity-80 drop-shadow-2xl animate-in zoom-in duration-500" strokeWidth={1} />}
              {step === 2 && <ShieldCheck size={120} className="text-purple-500 opacity-80 drop-shadow-2xl animate-in zoom-in duration-500" strokeWidth={1} />}
              {step === 3 && <User size={120} className="text-emerald-500 opacity-80 drop-shadow-2xl animate-in zoom-in duration-500" strokeWidth={1} />}
           </div>
-
           <h2 className="text-3xl font-bold text-slate-900 mb-4 tracking-tight">
             {step === 1 ? "Secure Verification" : step === 2 ? "Protected Credentials" : "Your Identity"}
           </h2>

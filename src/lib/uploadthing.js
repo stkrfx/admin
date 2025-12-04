@@ -7,5 +7,5 @@ import {
 export const UploadButton = generateUploadButton();
 export const UploadDropzone = generateUploadDropzone();
 
-// Add this line to export the hook you are trying to use
+// CRITICAL: Export the hook here
 export const { useUploadThing, uploadFiles } = generateReactHelpers();
