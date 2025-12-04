@@ -9,7 +9,7 @@ import { authOptions } from "@/lib/auth";
 import crypto from 'crypto';
 import { limitKey } from "@/lib/rateLimiter";
 
-// 0. Get User Data (Safe Serialization Fix)
+// 0. Get User Data & Status (Pre-fill)
 export async function getSetupUser() {
   try {
     const session = await getServerSession(authOptions);
@@ -17,28 +17,27 @@ export async function getSetupUser() {
 
     await connectMongo();
     
-    // Use lean() to get a plain JS object, select only needed fields
+    // Use .lean() to return a plain JavaScript object
     const user = await User.findById(session.user.id)
-      .select('name username email photo')
+      .select('name username email photo isVerified')
       .lean();
     
     if (!user) return null;
 
-    // Manually construct response to ensure strict serialization
     return {
       name: user.name || '',
       username: user.username || '',
       email: user.email || '',
-      photo: user.photo || ''
+      photo: user.photo || '',
+      isVerified: user.isVerified || false
     };
   } catch (error) {
     console.error("Get Setup User Error:", error);
-    // Return null instead of throwing to prevent client crash
     return null;
   }
 }
 
-// 1. Send OTP
+// Step 0: Send OTP
 export async function sendVerificationOTP() {
   const session = await getServerSession(authOptions);
   if (!session) return { error: "Unauthorized" };
@@ -51,7 +50,7 @@ export async function sendVerificationOTP() {
   if (!user) return { error: "User not found" };
 
   const otp = crypto.randomInt(100000, 999999).toString();
-  const expiry = new Date(Date.now() + 10 * 60 * 1000); 
+  const expiry = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
 
   user.verificationOTP = otp;
   user.verificationOTPExpiry = expiry;
@@ -69,8 +68,8 @@ export async function sendVerificationOTP() {
   return { success: true };
 }
 
-// 2. Verify OTP & Set Password
-export async function verifyAndSetPassword({ otp, password }) {
+// Step 1: Verify Code Only (Does NOT unlock account yet)
+export async function verifyCode(otp) {
   const session = await getServerSession(authOptions);
   if (!session) return { error: "Unauthorized" };
 
@@ -86,22 +85,17 @@ export async function verifyAndSetPassword({ otp, password }) {
     return { error: "Verification code has expired" };
   }
 
-  const hashedPassword = await bcrypt.hash(password, 10);
-  
-  user.password = hashedPassword;
+  // Mark Verified
   user.isVerified = true;
   user.verificationOTP = undefined;
   user.verificationOTPExpiry = undefined;
-  
-  // Unlock account immediately so step 3 is optional
-  user.forcePasswordChange = false; 
   
   await user.save();
   return { success: true };
 }
 
-// 3. Update Profile
-export async function completeProfileSetup({ name, username, photo }) {
+// Step 2: Update Profile
+export async function updateSetupProfile({ name, username, photo }) {
   const session = await getServerSession(authOptions);
   if (!session) return { error: "Unauthorized" };
 
@@ -118,6 +112,23 @@ export async function completeProfileSetup({ name, username, photo }) {
     if (exists) return { error: "Username is already taken" };
     user.username = username;
   }
+  
+  await user.save();
+  return { success: true };
+}
+
+// Step 3: Set Password & Unlock Account
+export async function finalizeSetup({ password }) {
+  const session = await getServerSession(authOptions);
+  if (!session) return { error: "Unauthorized" };
+
+  await connectMongo();
+  const user = await User.findById(session.user.id);
+
+  const hashedPassword = await bcrypt.hash(password, 10);
+  
+  user.password = hashedPassword;
+  user.forcePasswordChange = false; // THIS UNLOCKS THE DASHBOARD
   
   await user.save();
   return { success: true };
