@@ -1,11 +1,8 @@
-import {
-  generateUploadButton,
-  generateUploadDropzone,
-  generateReactHelpers,
-} from "@uploadthing/react";
+import { generateReactHelpers } from "@uploadthing/react";
 
-export const UploadButton = generateUploadButton();
-export const UploadDropzone = generateUploadDropzone();
-
-// CRITICAL: Export the hook here
+/**
+ * Core UploadThing helpers for the client.
+ * - useUploadThing: Hook for custom upload flows (chat, profile pic).
+ * - uploadFiles: Imperative upload function.
+ */
 export const { useUploadThing, uploadFiles } = generateReactHelpers();

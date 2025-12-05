@@ -8,7 +8,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { sendVerificationOTP, verifyCode, updateSetupProfile, finalizeSetup, getSetupUser } from '@/actions/setup';
 import { 
-  Loader2, Mail, Lock, CheckCircle2, ArrowRight, User, ShieldCheck, LogOut, Camera, Edit2, Send, Wand2
+  Loader2, Mail, Lock, CheckCircle2, ArrowRight, User, Wand2, ShieldCheck, LogOut, Camera, Edit2, Send 
 } from 'lucide-react';
 import { useUploadThing } from "@/lib/uploadthing"; 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -49,23 +49,21 @@ export default function SetupAccountPage() {
   const [step, setStep] = useState(0); 
   const [loading, setLoading] = useState(false);
   const [resendTimer, setResendTimer] = useState(0);
-  
-  // Profile State
-  const [photoUrl, setPhotoUrl] = useState(null); // Important: Initialize as null, not ""
-  const [isUploading, setIsUploading] = useState(false);
+  const [photoUrl, setPhotoUrl] = useState(null);
+    // local uploading state — combine this with the uploadthing hook's state so the UI always
+    // reflects the true upload lifecycle even when the hook's status lags.
+    const [isUploadingLocal, setIsUploadingLocal] = useState(false);
+  const [verifiedOTP, setVerifiedOTP] = useState('');
   const [dbUser, setDbUser] = useState(null);
   
   const fileInputRef = useRef(null);
 
   // Forms
   const otpForm = useForm({ resolver: zodResolver(otpSchema) });
-  const profileForm = useForm({ 
-    resolver: zodResolver(profileSchema),
-    defaultValues: { name: '', username: '' } 
-  });
+  const profileForm = useForm({ resolver: zodResolver(profileSchema) });
   const passwordForm = useForm({ resolver: zodResolver(passwordSchema) });
 
-  // 1. Fetch Data & Auto-Skip
+  // 1. Fetch User Data
   useEffect(() => {
     async function init() {
       const user = await getSetupUser();
@@ -73,13 +71,11 @@ export default function SetupAccountPage() {
         setDbUser(user);
         if (user.photo) setPhotoUrl(user.photo);
         
-        // Sync form with DB data
         profileForm.reset({
           name: user.name || '',
           username: user.username || ''
         });
 
-        // If verified, skip to Profile (Step 2)
         if (user.isVerified) {
           setStep(2);
         }
@@ -88,38 +84,61 @@ export default function SetupAccountPage() {
     if (session?.user) init();
   }, [session, profileForm]);
 
-  // 2. Upload Logic (Fixed Spinner)
-  const { startUpload } = useUploadThing("imageUploader", {
-    onClientUploadComplete: (res) => {
-      if (res?.[0]?.url) {
-        setPhotoUrl(res[0].url);
-        toast.success("Photo Updated");
-      }
-      setIsUploading(false); // Ensure spinner stops
-    },
-    onUploadError: (e) => {
-      setIsUploading(false); // Ensure spinner stops
-      toast.error("Upload Failed");
-      console.error(e);
-    },
-  });
-
-  const handleImageChange = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    // Optimistic UI
-    const previewUrl = URL.createObjectURL(file);
-    setPhotoUrl(previewUrl);
-    setIsUploading(true);
-
-    try {
-      await startUpload([file]);
-    } catch (error) {
-      // Catch any immediate errors from startUpload
-      setIsUploading(false);
+  // 2. Upload Hook (With Debug Logs)
+ const { startUpload, isUploading: isUploadingHook } = useUploadThing("profilePicture", {
+  onClientUploadComplete: (res) => {
+    if (res && res[0]) {
+      const newUrl = res[0].url;
+      setPhotoUrl(newUrl);
+      toast.success("Image uploaded successfully");
     }
-  };
+  },
+  onUploadError: (error) => {
+    toast.error(`Upload failed: ${error.message}`);
+  },
+});
+
+  // Combine hook and local uploading states so UI doesn't get stuck if the hook lags
+  // When the uploadthing hook gets out-of-sync it can stay `true` after our
+  // upload finishes. We ignore the hook's value for a short window after our
+  // local upload completes to avoid a stuck spinner.
+  const [ignoreHookUntil, setIgnoreHookUntil] = useState(0);
+  const ignoreHookRef = useRef(null);
+
+  const isUploading = Boolean(
+    isUploadingLocal || (isUploadingHook && Date.now() >= ignoreHookUntil)
+  );
+
+const handleImageChange = async (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+
+  // Create a preview immediately
+  const objectUrl = URL.createObjectURL(file);
+  setPhotoUrl(objectUrl);
+
+  // Set local uploading flag so UI is responsive even if the hook state lags
+  setIsUploadingLocal(true);
+  try {
+    await startUpload([file]);
+  } finally {
+    // Ensure local flag is reset regardless of success/failure
+    setIsUploadingLocal(false);
+    // Revoke the temporary object URL to avoid leaking memory. Safe to revoke
+    // since onClientUploadComplete should replace preview with the remote URL.
+    try { URL.revokeObjectURL(objectUrl); } catch (e) { /* ignore */ }
+
+    // After our local upload finishes, temporarily ignore the library hook
+    // state for a short window (2s). This prevents the spinner from staying
+    // visible if the hook remains `true` due to a race/bug.
+    setIgnoreHookUntil(Date.now() + 2000);
+    if (ignoreHookRef.current) clearTimeout(ignoreHookRef.current);
+    ignoreHookRef.current = setTimeout(() => setIgnoreHookUntil(0), 2000);
+  }
+};
+
+  // cleanup timer on unmount
+  useEffect(() => () => { if (ignoreHookRef.current) clearTimeout(ignoreHookRef.current); }, []);
 
   // Timer
   useEffect(() => {
@@ -148,6 +167,7 @@ export default function SetupAccountPage() {
     try {
       const res = await verifyCode(data.otp);
       if (res.success) {
+        setVerifiedOTP(data.otp);
         setStep(2); 
         toast.success("Email Verified!");
       } else toast.error(res.error);
@@ -201,13 +221,11 @@ export default function SetupAccountPage() {
     <div className="w-full min-h-[100dvh] flex bg-white">
       <Toaster position="bottom-right" richColors closeButton />
 
-      {/* --- LEFT SIDE: FORM --- */}
+      {/* --- LEFT SIDE --- */}
       <div className="w-full lg:w-1/2 flex flex-col justify-center items-center p-8 sm:p-12 lg:p-24 relative z-10">
-        
-        {/* Mobile Header Doodle */}
         <div className="lg:hidden absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-blue-600 to-purple-600"></div>
 
-        {/* Progress Bar (Desktop) */}
+        {/* Progress Bar */}
         <div className="absolute top-0 left-0 w-full h-1.5 bg-slate-100 hidden lg:block">
           <div 
             className="h-full bg-slate-900 transition-all duration-500 ease-out" 
@@ -244,7 +262,7 @@ export default function SetupAccountPage() {
               <Button onClick={handleSendOTP} disabled={loading} className="w-full h-12 text-base font-semibold shadow-lg shadow-slate-900/10 bg-slate-900 hover:bg-slate-800">
                 {loading ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <>Send Code <Send className="ml-2 h-4 w-4" /></>}
               </Button>
-              <button onClick={() => signOut()} className="w-full text-sm text-slate-400 hover:text-slate-600 font-medium flex items-center justify-center gap-2 transition-colors">
+              <button onClick={() => signOut()} className="w-full text-sm text-slate-400 hover:text-slate-600 font-medium flex items-center justify-center gap-2">
                 <LogOut size={14} /> Sign out
               </button>
             </div>
@@ -261,7 +279,7 @@ export default function SetupAccountPage() {
                   </button>
                 </div>
                 
-                {/* FIXED OTP DESIGN: Full width, separate cells */}
+                {/* IMPROVED OTP DESIGN */}
                 <div className="w-full">
                   <Controller
                     control={otpForm.control}
@@ -272,7 +290,8 @@ export default function SetupAccountPage() {
                           {[0, 1, 2, 3, 4, 5].map((index) => (
                             <InputOTPSlot 
                               key={index} index={index} 
-                              className="flex-1 h-14 text-xl border-2 border-slate-200 shadow-sm !rounded-xl focus:border-slate-900 focus:ring-slate-900/20 bg-white transition-all" 
+                              // Override shadcn grouping with !important for separate boxes
+                              className="flex-1 h-14 text-xl !border-2 !border-slate-200 !rounded-xl shadow-sm focus:!border-slate-900 focus:!ring-slate-900/20 bg-white transition-all" 
                             />
                           ))}
                         </div>
@@ -299,41 +318,37 @@ export default function SetupAccountPage() {
 
               <form onSubmit={profileForm.handleSubmit(onUpdateProfile)} className="space-y-8">
                 
-                {/* Photo Upload */}
                 <div className="flex justify-center">
-                  <div 
-                    className="relative group cursor-pointer" 
-                    onClick={() => fileInputRef.current?.click()}
-                  >
-                    <Avatar className="h-32 w-32 border-4 border-white shadow-xl group-hover:scale-105 transition-transform duration-300 ring-4 ring-slate-50">
-                      {/* SAFE IMAGE SRC: Avoids "" error */}
-                      <AvatarImage src={photoUrl || dbUser?.photo || null} className="object-cover" />
-                      <AvatarFallback className="bg-slate-900 text-slate-50 text-4xl font-bold uppercase">
-                        {dbUser?.name?.[0] || 'U'}
-                      </AvatarFallback>
-                    </Avatar>
-                    
-                    {/* Spinner / Hover Overlay */}
-                    <div className={cn(
-                      "absolute inset-0 bg-slate-900/60 rounded-full flex items-center justify-center transition-opacity duration-200 backdrop-blur-[1px]",
-                      isUploading ? "opacity-100" : "opacity-0 group-hover:opacity-100"
-                    )}>
-                      {isUploading ? <Loader2 className="text-white animate-spin" /> : <Camera className="text-white h-8 w-8" />}
-                    </div>
+                  <div className="relative group cursor-pointer" onClick={() => fileInputRef.current?.click()}>
+  <Avatar className="h-32 w-32 border-4 border-white shadow-xl ring-4 ring-slate-50">
+    <AvatarImage src={photoUrl || dbUser?.photo} className="object-cover" />
+    <AvatarFallback className="bg-slate-900 text-slate-50 text-4xl font-bold uppercase">
+      {profileForm.watch("name")?.[0] || "U"}
+    </AvatarFallback>
+  </Avatar>
 
-                    <div className="absolute bottom-0 right-0 bg-white p-2 rounded-full shadow-md border border-slate-100 text-slate-700 group-hover:bg-slate-50 transition-colors">
-                      <Edit2 size={16} />
-                    </div>
-                    
-                    <input 
-                      ref={fileInputRef} 
-                      type="file" 
-                      className="hidden" 
-                      accept="image/*" 
-                      onChange={handleImageChange} 
-                      disabled={isUploading} 
-                    />
-                  </div>
+  {/* Upload overlay */}
+  {isUploading && (
+    <div className="absolute inset-0 bg-black/50 rounded-full flex items-center justify-center backdrop-blur-sm">
+      <Loader2 className="h-8 w-8 text-white animate-spin" />
+    </div>
+  )}
+
+  {!isUploading && (
+    <div className="absolute inset-0 bg-slate-900/20 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+      <Camera className="text-white h-8 w-8" />
+    </div>
+  )}
+
+  <input
+    ref={fileInputRef}
+    type="file"
+    className="hidden"
+    accept="image/*"
+    onChange={handleImageChange}
+    disabled={isUploading}
+  />
+</div>
                 </div>
 
                 <div className="space-y-5">

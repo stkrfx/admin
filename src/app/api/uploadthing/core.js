@@ -4,27 +4,52 @@ import { authOptions } from "@/lib/auth";
 
 const f = createUploadthing();
 
-// FileRouter for your app, can contain multiple FileRoutes
+/**
+ * Shared Auth Middleware
+ * Verifies the user is logged in via NextAuth before allowing upload.
+ */
+const handleAuth = async () => {
+  const session = await getServerSession(authOptions);
+  if (!session || !session.user) {
+    throw new Error("Unauthorized");
+  }
+  console.log(`[UploadThing] User ${session.user.id} is authenticated for upload.`);
+  return { userId: session.user.id };
+};
+
 export const ourFileRouter = {
-  // Define as many FileRoutes as you like, each with a unique slug
-  imageUploader: f({ image: { maxFileSize: "4MB", maxFileCount: 1 } })
-    // Set permissions and file types for this FileRoute
-    .middleware(async ({ req }) => {
-      // This code runs on your server before upload
-      const session = await getServerSession(authOptions);
-
-      // If you throw, the user will not be able to upload
-      if (!session) throw new Error("Unauthorized");
-
-      // Whatever is returned here is accessible in onUploadComplete as `metadata`
-      return { userId: session.user.id };
-    })
+  // 1. Chat Attachments (Images, Audio, PDF)
+  chatAttachment: f({
+    image: { maxFileSize: "8MB", maxFileCount: 1 },
+    audio: { maxFileSize: "16MB", maxFileCount: 1 }, // Larger for voice notes
+    pdf: { maxFileSize: "16MB", maxFileCount: 1 },
+  })
+    .middleware(async () => await handleAuth())
     .onUploadComplete(async ({ metadata, file }) => {
-      // This code RUNS ON YOUR SERVER after upload
-      console.log("Upload complete for userId:", metadata.userId);
-      console.log("file url", file.url);
+      try {
+        console.log(`[UploadThing] Chat onUploadComplete invoked — metadata=${JSON.stringify(metadata)}, file=${JSON.stringify(file)}`);
+        // Do any post-upload work here. Return value sent back to client as the
+        // onClientUploadComplete response.
+        return { uploadedBy: metadata?.userId, url: file?.url };
+      } catch (err) {
+        console.error('[UploadThing] Chat onUploadComplete ERROR', err);
+        throw err; // rethrow so uploadthing knows it failed
+      }
+    }),
 
-      // !!! Whatever is returned here is sent to the clientside `onClientUploadComplete` callback
-      return { uploadedBy: metadata.userId, url: file.url };
+  // 2. User Profile Picture (Strictly Images)
+  profilePicture: f({
+    image: { maxFileSize: "4MB", maxFileCount: 1 },
+  })
+    .middleware(async () => await handleAuth())
+    .onUploadComplete(async ({ metadata, file }) => {
+      try {
+        console.log(`[UploadThing] Profile onUploadComplete invoked — metadata=${JSON.stringify(metadata)}, file=${JSON.stringify(file)}`);
+        // Update user model or trigger async jobs here if needed
+        return { uploadedBy: metadata?.userId, url: file?.url };
+      } catch (err) {
+        console.error('[UploadThing] Profile onUploadComplete ERROR', err);
+        throw err;
+      }
     }),
 };
